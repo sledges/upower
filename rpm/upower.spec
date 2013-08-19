@@ -22,6 +22,7 @@ BuildRequires:  pkgconfig(dbus-glib-1) >= 0.76
 BuildRequires:  pkgconfig(glib-2.0) >= 2.21.5
 BuildRequires:  pkgconfig(gio-2.0) >= 2.16.1
 BuildRequires:  pkgconfig(polkit-gobject-1) >= 0.97
+BuildRequires:  pkgconfig(udev) >= 187
 BuildRequires:  libtool
 BuildRequires:  intltool
 BuildRequires:  gettext
@@ -45,7 +46,8 @@ Headers and libraries for UPower.
 %setup -q -n %{name}-%{version}/upower
 
 %build
-
+export PKG_CONFIG=pkg-config
+./autogen.sh
 %configure --disable-static \
     --disable-gtk-doc \
     --enable-systemd

@@ -86,11 +86,7 @@ DISTCLEANFILES =					\
 	upower.xml					\
 	UPower.xml
 
-if ENABLE_GTK_DOC
-include $(top_srcdir)/gtk-doc.make
-else
 EXTRA_DIST =
-endif
 
 # Version information for marking the documentation
 EXTRA_DIST += version.xml.in
