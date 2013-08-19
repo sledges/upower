@@ -24,7 +24,8 @@ AM_MAINTAINER_MODE([enable])
 # enable nice build output on automake1.11
 AM_SILENT_RULES([yes])
 
-GOBJECT_INTROSPECTION_CHECK([0.9.9])
+AM_CONDITIONAL(HAVE_INTROSPECTION, false)
+#GOBJECT_INTROSPECTION_CHECK([0.9.9])
 
 # use this in up-version.h
 UP_MAJOR_VERSION=up_major_version
@@ -80,7 +81,7 @@ if test "${enable_man_page}" != no; then
 fi
 AM_CONDITIONAL(MAN_PAGES_ENABLED, test x$enable_man_pages = xyes)
 
-GTK_DOC_CHECK([1.11],[--flavour no-tmpl])
+AM_CONDITIONAL(ENABLE_GTK_DOC, false)
 
 AC_ARG_WITH([udevrulesdir],
             AS_HELP_STRING([--with-udevrulesdir=DIR], [Directory for udev rules]),
