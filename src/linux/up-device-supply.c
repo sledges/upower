@@ -60,6 +60,7 @@ struct UpDeviceSupplyPrivate
 	guint			 unknown_retries;
 	gboolean		 enable_poll;
 	gboolean		 is_power_supply;
+	gboolean		 shown_invalid_voltage_warning;
 };
 
 G_DEFINE_TYPE (UpDeviceSupply, up_device_supply, UP_TYPE_DEVICE)
@@ -134,6 +135,7 @@ up_device_supply_reset_values (UpDeviceSupply *supply)
 		      "time-to-empty", (gint64) 0,
 		      "time-to-full", (gint64) 0,
 		      "percentage", (gdouble) 0.0,
+		      "temperature", (gdouble) 0.0,
 		      "technology", UP_DEVICE_TECHNOLOGY_UNKNOWN,
 		      NULL);
 }
@@ -371,7 +373,7 @@ out:
  * up_device_supply_get_design_voltage:
  **/
 static gdouble
-up_device_supply_get_design_voltage (const gchar *native_path)
+up_device_supply_get_design_voltage (UpDeviceSupply *device, const gchar *native_path)
 {
 	gdouble voltage;
 	gchar *device_type = NULL;
@@ -406,14 +408,20 @@ up_device_supply_get_design_voltage (const gchar *native_path)
 
 	/* is this a USB device? */
 	device_type = up_device_supply_get_string (native_path, "type");
-	if (g_ascii_strcasecmp (device_type, "USB") == 0) {
+	if (device_type != NULL && g_ascii_strcasecmp (device_type, "USB") == 0) {
 		g_debug ("USB device, so assuming 5v");
 		voltage = 5.0f;
 		goto out;
 	}
 
+	/* no valid value found; display a warning the first time for each
+	 * device */
+	if (!device->priv->shown_invalid_voltage_warning) {
+		device->priv->shown_invalid_voltage_warning = TRUE;
+		g_warning ("no valid voltage value found for device %s, assuming 10V", native_path);
+	}
 	/* completely guess, to avoid getting zero values */
-	g_warning ("no voltage values, using 10V as approximation");
+	g_debug ("no voltage values for device %s, using 10V as approximation", native_path);
 	voltage = 10.0f;
 out:
 	g_free (device_type);
@@ -431,6 +439,9 @@ up_device_supply_make_safe_string (gchar *text)
 
 	/* no point checking */
 	if (text == NULL)
+		return;
+
+	if (g_utf8_validate (text, -1, NULL))
 		return;
 
 	/* shunt up only safe chars */
@@ -490,6 +501,7 @@ up_device_supply_refresh_battery (UpDeviceSupply *supply)
 	gdouble voltage;
 	gint64 time_to_empty;
 	gint64 time_to_full;
+	gdouble temp;
 	gchar *manufacturer = NULL;
 	gchar *model_name = NULL;
 	gchar *serial_number = NULL;
@@ -525,7 +537,7 @@ up_device_supply_refresh_battery (UpDeviceSupply *supply)
 		energy = sysfs_get_double (native_path, "energy_avg") / 1000000.0;
 
 	/* used to convert A to W later */
-	voltage_design = up_device_supply_get_design_voltage (native_path);
+	voltage_design = up_device_supply_get_design_voltage (supply, native_path);
 
 	/* initial values */
 	if (!supply->priv->has_coldplug_values ||
@@ -693,19 +705,17 @@ up_device_supply_refresh_battery (UpDeviceSupply *supply)
 		energy_rate = up_device_supply_calculate_rate (supply, energy);
 
 	/* get a precise percentage */
-	if (energy_full > 0.0f) {
+        if (sysfs_file_exists (native_path, "capacity")) {
+		percentage = sysfs_get_double (native_path, "capacity");
+                /* for devices which provide capacity, but not {energy,charge}_now */
+                if (energy < 0.1f && energy_full > 0.0f)
+                    energy = energy_full * percentage / 100;
+        } else if (energy_full > 0.0f) {
 		percentage = 100.0 * energy / energy_full;
 		if (percentage < 0.0f)
 			percentage = 0.0f;
 		if (percentage > 100.0f)
 			percentage = 100.0f;
-	}
-
-	/* device is a peripheral and not providing power to the computer */
-	if (energy < 0.01f &&
-	    energy_rate < 0.01f &&
-	    energy_full < 0.01f) {
-		percentage = sysfs_get_double (native_path, "capacity");
 	}
 
 	/* the battery isn't charging or discharging, it's just
@@ -787,6 +797,9 @@ up_device_supply_refresh_battery (UpDeviceSupply *supply)
 	if (time_to_full > (20 * 60 * 60)) /* 20 hours for charging */
 		time_to_full = 0;
 
+	/* get temperature */
+	temp = sysfs_get_double(native_path, "temp") / 10.0;
+
 	/* check if the energy value has changed and, if that's the case,
 	 * store the new values in the buffer. */
 	if (up_device_supply_push_new_energy (supply, energy))
@@ -813,6 +826,7 @@ up_device_supply_refresh_battery (UpDeviceSupply *supply)
 		      "voltage", voltage,
 		      "time-to-empty", time_to_empty,
 		      "time-to-full", time_to_full,
+		      "temperature", temp,
 		      NULL);
 
 out:
@@ -850,10 +864,16 @@ up_device_supply_coldplug (UpDevice *device)
 {
 	UpDeviceSupply *supply = UP_DEVICE_SUPPLY (device);
 	gboolean ret = FALSE;
+	GUdevDevice *bluetooth;
 	GUdevDevice *native;
+	const gchar *file;
+	const gchar *device_path = NULL;
 	const gchar *native_path;
 	const gchar *scope;
 	gchar *device_type = NULL;
+	gchar *input_path = NULL;
+	GDir *dir = NULL;
+	GError *error = NULL;
 	UpDeviceKind type = UP_DEVICE_KIND_UNKNOWN;
 
 	up_device_supply_reset_values (supply);
@@ -883,7 +903,50 @@ up_device_supply_coldplug (UpDevice *device)
 		if (g_ascii_strcasecmp (device_type, "mains") == 0) {
 			type = UP_DEVICE_KIND_LINE_POWER;
 		} else if (g_ascii_strcasecmp (device_type, "battery") == 0) {
-			type = UP_DEVICE_KIND_BATTERY;
+
+			/* Detect if the battery comes from bluetooth keyboard or mouse. */
+			bluetooth = g_udev_device_get_parent_with_subsystem (native, "bluetooth", NULL);
+			if (bluetooth != NULL) {
+				device_path = g_udev_device_get_sysfs_path (bluetooth);
+				if ((dir = g_dir_open (device_path, 0, &error))) {
+					while ((file = g_dir_read_name (dir))) {
+						/* Check if it is an input device. */
+						if (g_str_has_prefix (file, "input")) {
+							input_path = g_build_filename (device_path, file, NULL);
+							break;
+						}
+					}
+					g_dir_close (dir);
+				} else {
+					g_warning ("Can not open folder %s: %s", device_path, error->message);
+					g_error_free (error);
+				}
+				g_object_unref (bluetooth);
+			}
+
+			if (input_path != NULL) {
+				if ((dir = g_dir_open (input_path, 0, &error))) {
+					while ((file = g_dir_read_name (dir))) {
+						/* Check if it is a mouse device. */
+						if (g_str_has_prefix (file, "mouse")) {
+							type = UP_DEVICE_KIND_MOUSE;
+							break;
+						}
+					}
+					g_dir_close (dir);
+				} else {
+					g_warning ("Can not open folder %s: %s", input_path, error->message);
+					g_error_free (error);
+				}
+				g_free (input_path);
+				if (type == UP_DEVICE_KIND_UNKNOWN) {
+					type = UP_DEVICE_KIND_KEYBOARD;
+				}
+			}
+
+			if (type == UP_DEVICE_KIND_UNKNOWN) {
+				type = UP_DEVICE_KIND_BATTERY;
+			}
 		} else if (g_ascii_strcasecmp (device_type, "USB") == 0) {
 
 			/* use a heuristic to find the device type */
@@ -1014,6 +1077,8 @@ up_device_supply_init (UpDeviceSupply *supply)
 	supply->priv->energy_old = g_new (gdouble, UP_DEVICE_SUPPLY_ENERGY_OLD_LENGTH);
 	supply->priv->energy_old_timespec = g_new (GTimeVal, UP_DEVICE_SUPPLY_ENERGY_OLD_LENGTH);
 	supply->priv->energy_old_first = 0;
+
+	supply->priv->shown_invalid_voltage_warning = FALSE;
 }
 
 /**
