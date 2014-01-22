@@ -314,9 +314,12 @@ gboolean
 up_client_get_properties_sync (UpClient *client, GCancellable *cancellable, GError **error)
 {
 	gboolean ret = TRUE;
-	gboolean allowed = FALSE;
+	gboolean prop_val;
 	GHashTable *props;
 	GValue *value;
+#ifdef ENABLE_DEPRECATED
+	gboolean allowed = FALSE;
+#endif
 
 	props = NULL;
 
@@ -325,7 +328,8 @@ up_client_get_properties_sync (UpClient *client, GCancellable *cancellable, GErr
 	if (!client->priv->prop_proxy)
 		goto out;
 
-	error = NULL;
+	if (error != NULL)
+		*error = NULL;
 	ret = dbus_g_proxy_call (client->priv->prop_proxy, "GetAll", error,
 				 G_TYPE_STRING, "org.freedesktop.UPower",
 				 G_TYPE_INVALID,
@@ -342,6 +346,7 @@ up_client_get_properties_sync (UpClient *client, GCancellable *cancellable, GErr
 	g_free (client->priv->daemon_version);
 	client->priv->daemon_version = g_strdup (g_value_get_string (value));
 
+#ifdef ENABLE_DEPRECATED
 	value = g_hash_table_lookup (props, "CanSuspend");
 	if (value == NULL) {
 		g_warning ("No 'CanSuspend' property");
@@ -353,8 +358,8 @@ up_client_get_properties_sync (UpClient *client, GCancellable *cancellable, GErr
 	if (!ret)
 		goto out;
 
-	ret = g_value_get_boolean (value) && allowed;
-	if (ret != client->priv->can_suspend) {
+	prop_val = g_value_get_boolean (value) && allowed;
+	if (prop_val != client->priv->can_suspend) {
 		client->priv->can_suspend = ret;
 		g_object_notify (G_OBJECT(client), "can-suspend");
 	}
@@ -369,19 +374,20 @@ up_client_get_properties_sync (UpClient *client, GCancellable *cancellable, GErr
 	if (!ret)
 		goto out;
 
-	ret = g_value_get_boolean (value) && allowed;
-	if (ret != client->priv->can_hibernate) {
+	prop_val = g_value_get_boolean (value) && allowed;
+	if (prop_val != client->priv->can_hibernate) {
 		client->priv->can_hibernate = ret;
 		g_object_notify (G_OBJECT(client), "can-hibernate");
 	}
+#endif /* ENABLE_DEPRECATED */
 
 	value = g_hash_table_lookup (props, "LidIsClosed");
 	if (value == NULL) {
 		g_warning ("No 'LidIsClosed' property");
 		goto out;
 	}
-	ret = g_value_get_boolean (value);
-	if (ret != client->priv->lid_is_closed) {
+	prop_val = g_value_get_boolean (value);
+	if (prop_val != client->priv->lid_is_closed) {
 		client->priv->lid_is_closed = ret;
 		g_object_notify (G_OBJECT(client), "lid-is-closed");
 	}
@@ -391,8 +397,8 @@ up_client_get_properties_sync (UpClient *client, GCancellable *cancellable, GErr
 		g_warning ("No 'OnBattery' property");
 		goto out;
 	}
-	ret = g_value_get_boolean (value);
-	if (ret != client->priv->on_battery) {
+	prop_val = g_value_get_boolean (value);
+	if (prop_val != client->priv->on_battery) {
 		client->priv->on_battery = ret;
 		g_object_notify (G_OBJECT(client), "on-battery");
 	}
@@ -402,8 +408,8 @@ up_client_get_properties_sync (UpClient *client, GCancellable *cancellable, GErr
 		g_warning ("No 'OnLowBattery' property");
 		goto out;
 	}
-	ret = g_value_get_boolean (value);
-	if (ret != client->priv->on_low_battery) {
+	prop_val = g_value_get_boolean (value);
+	if (prop_val != client->priv->on_low_battery) {
 		client->priv->on_low_battery = ret;
 		g_object_notify (G_OBJECT(client), "on-low-battery");
 	}
@@ -413,8 +419,8 @@ up_client_get_properties_sync (UpClient *client, GCancellable *cancellable, GErr
 		g_warning ("No 'LidIsPresent' property");
 		goto out;
 	}
-	ret = g_value_get_boolean (value);
-	if (ret != client->priv->lid_is_present) {
+	prop_val = g_value_get_boolean (value);
+	if (prop_val != client->priv->lid_is_present) {
 		client->priv->lid_is_present = ret;
 		g_object_notify (G_OBJECT(client), "lid-is-present");
 	}
@@ -424,7 +430,7 @@ up_client_get_properties_sync (UpClient *client, GCancellable *cancellable, GErr
 		g_warning ("No 'IsDocked' property");
 		goto out;
 	}
-	ret = g_value_get_boolean (value);
+	prop_val = g_value_get_boolean (value);
 	if (ret != client->priv->is_docked) {
 		client->priv->is_docked = ret;
 		g_object_notify (G_OBJECT(client), "is-docked");
@@ -435,8 +441,8 @@ up_client_get_properties_sync (UpClient *client, GCancellable *cancellable, GErr
 		g_warning ("No 'LidForceSleep' property");
 		goto out;
 	}
-	ret = g_value_get_boolean (value);
-	if (ret != client->priv->lid_force_sleep) {
+	prop_val = g_value_get_boolean (value);
+	if (prop_val != client->priv->lid_force_sleep) {
 		client->priv->lid_force_sleep = ret;
 		g_object_notify (G_OBJECT(client), "lid-force-sleep");
 	}

@@ -56,17 +56,18 @@ up_device_unifying_refresh (UpDevice *device)
 	UpDeviceState state = UP_DEVICE_STATE_UNKNOWN;
 	UpDeviceUnifying *unifying = UP_DEVICE_UNIFYING (device);
 	UpDeviceUnifyingPrivate *priv = unifying->priv;
+	double lux;
 
 	/* refresh the battery stats */
 	refresh_flags = HIDPP_REFRESH_FLAGS_BATTERY;
 
 	/*
-	 * Device hid++ v2 when in unreachable mode seems to be able
-	 * to respond to hid++ v1 queries (but fails to respond to v2
-	 * queries). When it gets waken up it starts responding
-	 * to v2 queries, so always try to upgrade protocol to v2
+	 * When a device is initially unreachable, the HID++ version cannot be
+	 * determined.  Therefore try determining the HID++ version, otherwise
+	 * battery information cannot be retrieved. Assume that the HID++
+	 * version does not change once detected.
 	 */
-	if (hidpp_device_get_version (priv->hidpp_device) < 2)
+	if (hidpp_device_get_version (priv->hidpp_device) == 0)
 		refresh_flags |= HIDPP_REFRESH_FLAGS_VERSION;
 
 	ret = hidpp_device_refresh (priv->hidpp_device,
@@ -91,9 +92,20 @@ up_device_unifying_refresh (UpDevice *device)
 	default:
 		break;
 	}
+
+	/* if a device is unreachable, some known values do not make sense */
+	if (!hidpp_device_is_reachable (priv->hidpp_device)) {
+		state = UP_DEVICE_STATE_UNKNOWN;
+	}
+
 	g_get_current_time (&timeval);
+	lux = hidpp_device_get_luminosity (priv->hidpp_device);
+	if (lux >= 0) {
+		g_object_set (device, "luminosity", lux, NULL);
+	}
+
 	g_object_set (device,
-		      "is-present", hidpp_device_get_version (priv->hidpp_device) > 0,
+		      "is-present", hidpp_device_is_reachable (priv->hidpp_device),
 		      "percentage", (gdouble) hidpp_device_get_batt_percentage (priv->hidpp_device),
 		      "state", state,
 		      "update-time", (guint64) timeval.tv_sec,
@@ -182,13 +194,19 @@ up_device_unifying_coldplug (UpDevice *device)
 	client = g_udev_client_new (NULL);
 	hidraw_list = g_udev_client_query_by_subsystem (client, "hidraw");
 	for (l = hidraw_list; l != NULL; l = l->next) {
+		gboolean receiver_found = FALSE;
+
 		if (g_strcmp0 (type, "lg-wireless") == 0) {
-			gboolean receiver_found = FALSE;
 			const gchar *filename;
 			GDir* dir;
+			GUdevDevice *parent_dev;
 
-			if (g_strcmp0 (g_udev_device_get_sysfs_path (native),
-						g_udev_device_get_sysfs_path(g_udev_device_get_parent(l->data))) != 0)
+			parent_dev = g_udev_device_get_parent(l->data);
+			receiver_found = g_strcmp0 (g_udev_device_get_sysfs_path (native),
+						g_udev_device_get_sysfs_path(parent_dev)) == 0;
+			g_object_unref (parent_dev);
+
+			if (!receiver_found)
 				continue;
 
 			/* hidraw device which exposes hiddev interface is our receiver */
@@ -207,16 +225,20 @@ up_device_unifying_coldplug (UpDevice *device)
 				}
 			}
 			g_dir_close(dir);
-
-			if (!receiver_found)
-				continue;
 		} else {
-			if (g_strcmp0 (g_udev_device_get_sysfs_path (parent),
-						g_udev_device_get_sysfs_path(g_udev_device_get_parent(l->data))) != 0)
-				continue;
+			GUdevDevice *parent_dev;
+
+			/* Unifying devices are located under their receiver */
+			parent_dev = g_udev_device_get_parent(l->data);
+			receiver_found = g_strcmp0 (g_udev_device_get_sysfs_path (parent),
+						g_udev_device_get_sysfs_path(parent_dev)) == 0;
+			g_object_unref (parent_dev);
 		}
-		receiver = g_object_ref (l->data);
-		break;
+
+		if (receiver_found) {
+			receiver = g_object_ref (l->data);
+			break;
+		}
 	}
 	if (receiver == NULL) {
 		g_debug ("Unable to find an hidraw device for Unifying receiver");
@@ -233,10 +255,14 @@ up_device_unifying_coldplug (UpDevice *device)
 	hidpp_device_set_hidraw_device (unifying->priv->hidpp_device,
 					device_file);
 
+	/* give newly paired devices a chance to complete pairing */
+	g_usleep(30000);
+
 	/* coldplug initial parameters */
 	ret = hidpp_device_refresh (unifying->priv->hidpp_device,
 				    HIDPP_REFRESH_FLAGS_VERSION |
 				    HIDPP_REFRESH_FLAGS_KIND |
+				    HIDPP_REFRESH_FLAGS_SERIAL |
 				    HIDPP_REFRESH_FLAGS_MODEL,
 				    &error);
 	if (!ret) {
@@ -255,6 +281,7 @@ up_device_unifying_coldplug (UpDevice *device)
 		      "vendor", vendor,
 		      "type", up_device_unifying_get_device_kind (unifying),
 		      "model", hidpp_device_get_model (unifying->priv->hidpp_device),
+		      "serial", hidpp_device_get_serial (unifying->priv->hidpp_device),
 		      "has-history", TRUE,
 		      "is-rechargeable", TRUE,
 		      "power-supply", FALSE,
