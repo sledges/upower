@@ -4,7 +4,7 @@ Name:       upower
 # << macros
 
 Summary:    Power Management Service
-Version:    0.9.21
+Version:    0.9.22
 Release:    1
 Group:      System/Libraries
 License:    GPLv2+
