@@ -99,7 +99,7 @@ up_wakeups_get_total_sync (UpWakeups *wakeups, GCancellable *cancellable, GError
  *
  * Gets the wakeups data from the daemon.
  *
- * Return value: (transfer full): an array of %UpWakeupItem's
+ * Return value: (element-type UpWakeupItem) (transfer full): an array of %UpWakeupItem's
  *
  * Since: 0.9.1
  **/
@@ -377,6 +377,8 @@ up_wakeups_finalize (GObject *object)
 		g_object_unref (wakeups->priv->proxy);
 	if (wakeups->priv->prop_proxy != NULL)
 		g_object_unref (wakeups->priv->prop_proxy);
+	if (wakeups->priv->bus)
+		dbus_g_connection_unref (wakeups->priv->bus);
 
 	G_OBJECT_CLASS (up_wakeups_parent_class)->finalize (object);
 }
@@ -393,8 +395,6 @@ up_wakeups_finalize (GObject *object)
 UpWakeups *
 up_wakeups_new (void)
 {
-	UpWakeups *wakeups;
-	wakeups = g_object_new (UP_TYPE_WAKEUPS, NULL);
-	return UP_WAKEUPS (wakeups);
+	return UP_WAKEUPS (g_object_new (UP_TYPE_WAKEUPS, NULL));
 }
 

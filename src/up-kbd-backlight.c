@@ -300,7 +300,8 @@ up_kbd_backlight_finalize (GObject *object)
 	kbd_backlight->priv = UP_KBD_BACKLIGHT_GET_PRIVATE (kbd_backlight);
 
 	/* close file */
-	close (kbd_backlight->priv->fd);
+	if (kbd_backlight->priv->fd >= 0)
+		close (kbd_backlight->priv->fd);
 
 	G_OBJECT_CLASS (up_kbd_backlight_parent_class)->finalize (object);
 }
@@ -311,8 +312,6 @@ up_kbd_backlight_finalize (GObject *object)
 UpKbdBacklight *
 up_kbd_backlight_new (void)
 {
-	UpKbdBacklight *kbd_backlight;
-	kbd_backlight = g_object_new (UP_TYPE_KBD_BACKLIGHT, NULL);
-	return UP_KBD_BACKLIGHT (kbd_backlight);
+	return g_object_new (UP_TYPE_KBD_BACKLIGHT, NULL);
 }
 
